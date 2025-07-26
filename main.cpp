@@ -2,16 +2,22 @@
 #include "stm32l475e_iot01_audio.h"
 #include "FILTER_LIB.h"
 
-// for collecting audio input
 static int16_t PCM_Buffer[PCM_BUFFER_LEN / 2];
+static int16_t *current_buffer = nullptr;
 static BSP_AUDIO_Init_t MicParams;
 static size_t num_samples = (PCM_BUFFER_LEN / 2) / sizeof(int16_t);
-
 static float sampling_time = 1.0f / 16000.0f;
-static float CUTOFF = 150.0f;
+static float CUTOFF = 200.0f;
 HPF hp_filter(sampling_time, CUTOFF);
 
 static EventQueue ev_queue;
+Thread processing_thread;
+Thread event_thread;
+static osThreadId_t processing_thread_id;
+
+volatile bool mic_enabled = true;
+InterruptIn button1(BUTTON1);
+DigitalOut led1(LED1); // led is on when audio is recording
 
 float process_audio(int16_t *samples) {
     // compute rms
@@ -31,6 +37,9 @@ float process_audio(int16_t *samples) {
     return dbfs;
 }
 
+// TODO: replace this with driving LED once we get them
+// the output is slightly out of sync with audio input 
+// because printf is slow i think
 void print_volume_bar(float dB) {
     // map -60 dB to 0 bars, 0 dB to 20 bars
     int bar_count = (int)((dB + 60.0f) / 3.0f);  // 0–20 steps
@@ -47,22 +56,38 @@ void print_volume_bar(float dB) {
 
 // first half of buffer
 void BSP_AUDIO_IN_HalfTransfer_CallBack (uint32_t Instance) {
-    float dB = process_audio((int16_t*)PCM_Buffer);
-    
-    ev_queue.call([dB]() {
-        print_volume_bar(dB);
-        fflush(stdout);
-    });
+    if (!mic_enabled) return;
+    current_buffer = PCM_Buffer;
+    osSignalSet(processing_thread_id, 0x1);
 }
 
 // second half of buffer
 void BSP_AUDIO_IN_TransferComplete_CallBack(uint32_t Instance) {
-    float dB = process_audio((int16_t*)(PCM_Buffer + num_samples));
-    
-    ev_queue.call([dB]() {
-        print_volume_bar(dB);
-        fflush(stdout);
-    });
+    if (!mic_enabled) return;
+    current_buffer = PCM_Buffer + num_samples;
+    osSignalSet(processing_thread_id, 0x1);
+}
+
+void audio_processing_thread() {
+    while (true) {
+        osSignalWait(0x1, osWaitForever);
+
+        if (current_buffer != nullptr) {
+            float dB = process_audio(current_buffer);
+            ev_queue.call(print_volume_bar, dB);
+        }
+    }
+}
+
+void toggle_microphone() {
+    mic_enabled = !mic_enabled;
+    led1 = !led1;
+
+    if (mic_enabled) {
+        BSP_AUDIO_IN_Resume(AUDIO_INSTANCE);
+    } else {
+        BSP_AUDIO_IN_Pause(AUDIO_INSTANCE);
+    }
 }
 
 int main()
@@ -86,6 +111,12 @@ int main()
     }
 
     BSP_AUDIO_IN_Record(AUDIO_INSTANCE, (uint8_t*)PCM_Buffer, PCM_BUFFER_LEN);
+    led1 = 1;
+
+    processing_thread.start(audio_processing_thread);
+    processing_thread_id = processing_thread.get_id();
+
+    button1.fall(&toggle_microphone);
 
     ev_queue.dispatch_forever();
 }
