@@ -23,9 +23,9 @@ This project runs on a shared Mbed OS instance
 
 ---
 
-## 🚀 Setup Guide
+## Setup Guide
 
-### 1. ⚙️ Update Wi-Fi Credentials
+### 1. Update Wi-Fi Credentials
 
 Open `main.cpp` and **replace** the SSID and password in the following line:
 
