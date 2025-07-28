@@ -1,6 +1,23 @@
 #include "mbed.h"
 #include "stm32l475e_iot01_audio.h"
 #include "FILTER_LIB.h"
+#include "WiFiInterface.h"
+#include "MQTTClient.h"
+#include "MQTTmbed.h"
+
+
+// MQTT 
+#define AVG_WINDOW_SECONDS 30
+#define DB_VALUES_PER_SECOND 10  // Tune this based on how often you process audio
+#define AVG_BUFFER_SIZE (AVG_WINDOW_SECONDS * DB_VALUES_PER_SECOND)
+
+float dB_buffer[AVG_BUFFER_SIZE];
+int dB_index = 0;
+int dB_count = 0;
+
+bool connect_to_wifi(WiFiInterface *wifi);
+bool connect_to_mqtt(WiFiInterface *wifi);
+void publish_mqtt_message(const char *topic, const char *payload);
 
 static int16_t PCM_Buffer[PCM_BUFFER_LEN / 2];
 static int16_t *current_buffer = nullptr;
@@ -18,6 +35,11 @@ static osThreadId_t processing_thread_id;
 volatile bool mic_enabled = true;
 InterruptIn button1(BUTTON1);
 DigitalOut led1(LED1); // led is on when audio is recording
+
+// MQTT
+SocketAddress broker;
+TCPSocket socket;
+MQTT::Client<TCPSocket, Countdown> *client;
 
 float process_audio(int16_t *samples) {
     // compute rms
@@ -74,7 +96,36 @@ void audio_processing_thread() {
 
         if (current_buffer != nullptr) {
             float dB = process_audio(current_buffer);
-            ev_queue.call(print_volume_bar, dB);
+
+            // Add to buffer
+            dB_buffer[dB_index++] = dB;
+            if (dB_index >= AVG_BUFFER_SIZE) dB_index = 0;
+            if (dB_count < AVG_BUFFER_SIZE) dB_count++;
+
+            // Only compute and send average every full window
+            if (dB_count == AVG_BUFFER_SIZE) {
+                float sum = 0;
+                float min_dB = 0;
+                float max_dB = -60;
+
+                for (int i = 0; i < AVG_BUFFER_SIZE; i++) {
+                    float val = dB_buffer[i];
+                    sum += val;
+                    if (val < min_dB) min_dB = val;
+                    if (val > max_dB) max_dB = val;
+                }
+                float avg_dB = sum / AVG_BUFFER_SIZE;
+
+                char payload[128];
+                snprintf(payload, sizeof(payload),
+                        "{\"avg_decibel\": %.1f, \"min_decibel\": %.1f, \"max_decibel\": %.1f}",
+                        avg_dB, min_dB, max_dB);
+
+
+                publish_mqtt_message("sound/volume", payload);
+
+                dB_count = 0; // reset after publishing
+            }
         }
     }
 }
@@ -90,8 +141,75 @@ void toggle_microphone() {
     }
 }
 
+
+bool connect_to_wifi(WiFiInterface *wifi) {
+    printf("Connecting to Wi-Fi...\n");
+
+    if (!wifi) {
+        printf("ERROR: No WiFiInterface found.\n");
+        return false;
+    }
+
+    int ret = wifi->connect("BELL740", "46E6AC951223", NSAPI_SECURITY_WPA_WPA2);
+    if (ret != 0) {
+        printf("❌ WiFi connection failed: %d\n", ret);
+        return false;
+    }
+
+    SocketAddress a;
+    wifi->get_ip_address(&a);
+    printf("✅ Wi-Fi connected! IP: %s\n", a.get_ip_address() ? a.get_ip_address() : "None");
+    return true;
+}
+
+bool connect_to_mqtt(WiFiInterface *wifi) {
+    wifi->gethostbyname("192.168.2.138", &broker);
+    broker.set_port(1883);
+
+    socket.open(wifi);
+    if (socket.connect(broker) != 0) {
+        printf("❌ Failed to connect to MQTT broker\n");
+        return false;
+    }
+
+    client = new MQTT::Client<TCPSocket, Countdown>(socket);
+    MQTTPacket_connectData connectData = MQTTPacket_connectData_initializer;
+    connectData.MQTTVersion = 3;
+    connectData.clientID.cstring = (char *)"disco-board";
+
+    if (client->connect(connectData) != 0) {
+        printf("❌ MQTT connection failed\n");
+        return false;
+    }
+
+    printf("📡 MQTT connected to broker!\n");
+    return true;
+}
+
+void publish_mqtt_message(const char *topic, const char *payload) {
+    MQTT::Message msg;
+    msg.qos = MQTT::QOS0;
+    msg.retained = false;
+    msg.dup = false;
+    msg.payload = (void *)payload;
+    msg.payloadlen = strlen(payload);
+
+    int pub = client->publish(topic, msg);
+    printf("📤 MQTT Publish to '%s' => %s\n", topic, pub == 0 ? "OK" : "FAIL");
+}
+
+
 int main()
 {
+
+    // Fixes no output issue which ocassionally happens
+    static UnbufferedSerial serial_port(USBTX, USBRX, 115200);
+    fflush(stdout);
+
+    WiFiInterface *wifi = WiFiInterface::get_default_instance();
+    if (!connect_to_wifi(wifi)) return -1;
+    if (!connect_to_mqtt(wifi)) return -1;
+
     // set up the microphone and start recording input
     MicParams.BitsPerSample = 16;
     MicParams.ChannelsNbr = AUDIO_CHANNELS;
