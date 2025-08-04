@@ -42,19 +42,18 @@ TCPSocket socket;
 MQTT::Client<TCPSocket, Countdown> *client;
 
 extern "C" void disable_unused_clocks() {
-    // oscillators
-    RCC->CR &= ~RCC_CR_HSEON;         // Disable HSE if unused
-    RCC->CR &= ~RCC_CR_HSION;         // Disable HSI16 if unused
-    RCC->CR &= ~RCC_CR_PLLON;         // Disable main PLL if not used
-    RCC->CR &= ~RCC_CR_PLLSAI1ON;     // Disable PLLSAI1
-    RCC->CR &= ~RCC_CR_PLLSAI2ON;     // Disable PLLSAI2
-    RCC->CR &= ~RCC_CR_HSIKERON;      // Kernel HSI off
 
-    // --- AHB Peripherals ---
+    if ((RCC->CR & RCC_CR_HSION) && ((RCC->PLLCFGR & RCC_PLLCFGR_PLLSRC_Msk) != RCC_PLLCFGR_PLLSRC_HSI)) {
+        RCC->CR &= ~RCC_CR_HSION;
+    }
+    RCC->CR &= ~RCC_CR_HSEON;
+    RCC->CR &= ~(RCC_CR_PLLSAI1ON | RCC_CR_PLLSAI2ON);
+    RCC->CSR &= ~RCC_CSR_LSION;
+    RCC->BDCR &= ~RCC_BDCR_LSEON;
+
     RCC->AHB1ENR &= ~(RCC_AHB1ENR_TSCEN | RCC_AHB1ENR_CRCEN);
     RCC->AHB2ENR &= ~(RCC_AHB2ENR_RNGEN | RCC_AHB2ENR_ADCEN | RCC_AHB2ENR_OTGFSEN | RCC_AHB2ENR_GPIOHEN | RCC_AHB2ENR_GPIOGEN | 
                       RCC_AHB2ENR_GPIOFEN | RCC_AHB2ENR_GPIOEEN | RCC_AHB2ENR_GPIODEN | RCC_AHB2ENR_GPIOCEN);
-    // // --- APB1 Peripherals ---
     RCC->APB1ENR1 &= ~(RCC_APB1ENR1_I2C2EN | RCC_APB1ENR1_I2C1EN | RCC_APB1ENR1_SPI2EN | RCC_APB1ENR1_TIM6EN | RCC_APB1ENR1_TIM2EN );
     RCC->APB1ENR2 &= ~(RCC_APB1ENR2_LPUART1EN);
     RCC->APB2ENR &= ~(RCC_APB2ENR_SPI1EN | RCC_APB2ENR_TIM1EN | RCC_APB2ENR_SDMMC1EN);
