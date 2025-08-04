@@ -41,6 +41,26 @@ SocketAddress broker;
 TCPSocket socket;
 MQTT::Client<TCPSocket, Countdown> *client;
 
+extern "C" void disable_unused_clocks() {
+    // oscillators
+    RCC->CR &= ~RCC_CR_HSEON;         // Disable HSE if unused
+    RCC->CR &= ~RCC_CR_HSION;         // Disable HSI16 if unused
+    RCC->CR &= ~RCC_CR_PLLON;         // Disable main PLL if not used
+    RCC->CR &= ~RCC_CR_PLLSAI1ON;     // Disable PLLSAI1
+    RCC->CR &= ~RCC_CR_PLLSAI2ON;     // Disable PLLSAI2
+    RCC->CR &= ~RCC_CR_HSIKERON;      // Kernel HSI off
+
+    // --- AHB Peripherals ---
+    RCC->AHB1ENR &= ~(RCC_AHB1ENR_TSCEN | RCC_AHB1ENR_CRCEN);
+    RCC->AHB2ENR &= ~(RCC_AHB2ENR_RNGEN | RCC_AHB2ENR_ADCEN | RCC_AHB2ENR_OTGFSEN | RCC_AHB2ENR_GPIOHEN | RCC_AHB2ENR_GPIOGEN | 
+                      RCC_AHB2ENR_GPIOFEN | RCC_AHB2ENR_GPIOEEN | RCC_AHB2ENR_GPIODEN | RCC_AHB2ENR_GPIOCEN);
+    // // --- APB1 Peripherals ---
+    RCC->APB1ENR1 &= ~(RCC_APB1ENR1_I2C2EN | RCC_APB1ENR1_I2C1EN | RCC_APB1ENR1_SPI2EN | RCC_APB1ENR1_TIM6EN | RCC_APB1ENR1_TIM2EN );
+    RCC->APB1ENR2 &= ~(RCC_APB1ENR2_LPUART1EN);
+    RCC->APB2ENR &= ~(RCC_APB2ENR_SPI1EN | RCC_APB2ENR_TIM1EN | RCC_APB2ENR_SDMMC1EN);
+}
+
+
 float process_audio(int16_t *samples) {
     // compute rms
     float sum_squares = 0.0f;
@@ -201,7 +221,7 @@ void publish_mqtt_message(const char *topic, const char *payload) {
 
 int main()
 {
-
+    disable_unused_clocks();
     // Fixes no output issue which ocassionally happens
     static UnbufferedSerial serial_port(USBTX, USBRX, 115200);
     fflush(stdout);
