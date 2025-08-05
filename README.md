@@ -15,11 +15,11 @@ This project runs on a shared Mbed OS instance
 ## Dependencies
 
 - Mbed OS (Tested on 6.x)  
-- `MQTTClient` 
+- [`MQTTClient`](http://os.mbed.com/teams/mqtt/code/MQTT/) 
 - Audio drivers for `stm32l475e_iot01_audio.h`  
-- `FILTER_LIB.h` for high-pass filtering  
-
-
+- [`FILTER_LIB.h`](http://os.mbed.com/teams/Project_WIPV_antiSlip/code/FILTER_LIB/) for high-pass filtering  
+- [wifi-ism43362](https://github.com/ARMmbed/wifi-ism43362.git) 
+- [IIR](http://os.mbed.com/teams/LDSC_Robotics_TAs/code/IIR/)
 
 ---
 
@@ -60,7 +60,7 @@ Install and start Mosquitto:
 brew install mosquitto
 ```
 
-Allow anonymous access with a config like `local.conf`:
+Allow anonymous access in the config file `~/.mosquitto/mosquitto.conf` using the following configuration:
 
 ```conf
 listener 1883
@@ -70,8 +70,8 @@ allow_anonymous true
 Run the broker:
 
 ```bash
-mosquitto -c local.conf
-```
+ mosquitto -c ~/.mosquitto/mosquitto.conf
+ ```
 
 ---
 
@@ -80,8 +80,10 @@ mosquitto -c local.conf
 In `main.cpp`, replace the IP with your computer’s local IP address:
 
 ```cpp
-wifi->gethostbyname("192.168.x.xxx", &broker);
+    broker.set_ip_address("192.168.2.138"); // replace the IP with broker's ip
 ```
+
+If the board complains about MQTT connection, ensure your broker is accessible in your network (i.e disable firewall, try to connect to broker through another device
 
 ## MQTT Payload Format
 
@@ -99,4 +101,4 @@ Publishes every \~30s to the topic `sound/volume`:
 
 Since MQTTClient library was written for MbedOS 5.x, the "write" and "read" methods were 
 replaced with `send` and `recv`, please replace `MQTTClient.h` in the `MQTT` library with 
-the provided implementation on root folder. 
+the provided implementation under `./Patch/`
