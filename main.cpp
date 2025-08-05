@@ -36,28 +36,52 @@ volatile bool mic_enabled = true;
 InterruptIn button1(BUTTON1);
 DigitalOut led1(LED1); // led is on when audio is recording
 
+// Wifi
+static WiFiInterface *g_wifi = nullptr;
+
 // MQTT
 SocketAddress broker;
 TCPSocket socket;
 MQTT::Client<TCPSocket, Countdown> *client;
 
 extern "C" void disable_unused_clocks() {
-    // gate unused system clocks
-    if ((RCC->CR & RCC_CR_HSION) && ((RCC->PLLCFGR & RCC_PLLCFGR_PLLSRC_Msk) != RCC_PLLCFGR_PLLSRC_HSI)) {
-        RCC->CR &= ~RCC_CR_HSION;
-    }
-    RCC->CR &= ~RCC_CR_HSEON;
+    // — disable secondary PLLs
     RCC->CR &= ~(RCC_CR_PLLSAI1ON | RCC_CR_PLLSAI2ON);
-    RCC->CSR &= ~RCC_CSR_LSION;
-    RCC->BDCR &= ~RCC_BDCR_LSEON;
 
-    // disable some unused peripheral clocks
+    // — turn off low-speed oscillators
+    RCC->CSR &= ~RCC_CSR_LSION;    // internal low-speed RC
+    RCC->BDCR &= ~RCC_BDCR_LSEON;  // external LSE (32 kHz)
+
+    // — gate buses for unused peripherals
+    // AHB1: TSC, CRC
     RCC->AHB1ENR &= ~(RCC_AHB1ENR_TSCEN | RCC_AHB1ENR_CRCEN);
-    RCC->AHB2ENR &= ~(RCC_AHB2ENR_RNGEN | RCC_AHB2ENR_ADCEN | RCC_AHB2ENR_OTGFSEN | RCC_AHB2ENR_GPIOHEN | RCC_AHB2ENR_GPIOGEN | 
-                      RCC_AHB2ENR_GPIOFEN | RCC_AHB2ENR_GPIOEEN | RCC_AHB2ENR_GPIODEN | RCC_AHB2ENR_GPIOCEN);
-    RCC->APB1ENR1 &= ~(RCC_APB1ENR1_I2C2EN | RCC_APB1ENR1_I2C1EN | RCC_APB1ENR1_SPI2EN | RCC_APB1ENR1_TIM6EN | RCC_APB1ENR1_TIM2EN );
+
+    RCC->AHB2ENR &= ~(RCC_AHB2ENR_RNGEN    // RNG
+                    | RCC_AHB2ENR_ADCEN    // ADC
+                    /*| RCC_AHB2ENR_SDMMC1EN*/ // <— keep
+                    /*| RCC_AHB2ENR_OTGFSEN*/  // <— keep USB CDC
+                    | RCC_AHB2ENR_GPIOCEN 
+                    | RCC_AHB2ENR_GPIODEN
+                    | RCC_AHB2ENR_GPIOEEN
+                    | RCC_AHB2ENR_GPIOFEN
+                    | RCC_AHB2ENR_GPIOGEN
+                    | RCC_AHB2ENR_GPIOHEN);
+
+    // APB1: I²C, SPI2, timers, KEEP TIM2/SysTick
+    RCC->APB1ENR1 &= ~(RCC_APB1ENR1_I2C1EN
+                     | RCC_APB1ENR1_I2C2EN
+                     | RCC_APB1ENR1_SPI2EN
+                     | RCC_APB1ENR1_TIM6EN
+                     /*| RCC_APB1ENR1_TIM2EN*/);
+
+    // APB1: LPUART1 but KEEP the serial port’s UART
     RCC->APB1ENR2 &= ~(RCC_APB1ENR2_LPUART1EN);
-    RCC->APB2ENR &= ~(RCC_APB2ENR_SPI1EN | RCC_APB2ENR_TIM1EN | RCC_APB2ENR_SDMMC1EN);
+
+    // APB2: SPI1, TIM1, SDMMC1 
+    RCC->APB2ENR &= ~(RCC_APB2ENR_SPI1EN
+                    | RCC_APB2ENR_TIM1EN
+                    /*| RCC_APB2ENR_SDMMC1EN*/  // <— keep for Wi-Fi
+                    );
 }
 
 
@@ -111,40 +135,63 @@ void BSP_AUDIO_IN_TransferComplete_CallBack(uint32_t Instance) {
 }
 
 void audio_processing_thread() {
+    bool mqtt_ready = false;
+    const float WAKE_THRESHOLD = -50.0f;  // only act if dB > this
+
     while (true) {
+        // Sleep until any IRQ (DMA handler)
+        printf("[LP] __WFI: sleeping until audio IRQ…\r\n");
+        __WFI();
         osSignalWait(0x1, osWaitForever);
 
-        if (current_buffer != nullptr) {
+        // Process the buffer half just filled
+        if (current_buffer) {
             float dB = process_audio(current_buffer);
+        
+            // only act (and log) when we actually exceed threshold
+            if (dB < WAKE_THRESHOLD) {
+                continue;
+            }
 
-            // Add to buffer
+            printf("[LP] instant dB = %.1f dB >= %.1f, processing…\r\n",
+               dB, WAKE_THRESHOLD);
+
+        
+
+            // Above threshold—add into rolling window
             dB_buffer[dB_index++] = dB;
             if (dB_index >= AVG_BUFFER_SIZE) dB_index = 0;
             if (dB_count < AVG_BUFFER_SIZE) dB_count++;
 
-            // Only compute and send average every full window
+            // If we  have a full window, compute stats and publish via MQTT
             if (dB_count == AVG_BUFFER_SIZE) {
-                float sum = 0;
-                float min_dB = 0;
-                float max_dB = -60;
-
+                float sum = 0.0f, min_dB = dB_buffer[0], max_dB = dB_buffer[0];
                 for (int i = 0; i < AVG_BUFFER_SIZE; i++) {
-                    float val = dB_buffer[i];
-                    sum += val;
-                    if (val < min_dB) min_dB = val;
-                    if (val > max_dB) max_dB = val;
+                    float v = dB_buffer[i];
+                    sum += v;
+                    min_dB = (v < min_dB ? v : min_dB);
+                    max_dB = (v > max_dB ? v : max_dB);
                 }
                 float avg_dB = sum / AVG_BUFFER_SIZE;
 
                 char payload[128];
                 snprintf(payload, sizeof(payload),
-                        "{\"avg_decibel\": %.1f, \"min_decibel\": %.1f, \"max_decibel\": %.1f}",
-                        avg_dB, min_dB, max_dB);
+                         "{\"avg_decibel\": %.1f, \"min_decibel\": %.1f, \"max_decibel\": %.1f}",
+                         avg_dB, min_dB, max_dB);
 
+                if (!mqtt_ready) {
+                    printf("[MQTT] connecting to broker…\r\n");
+                    if (!connect_to_mqtt(g_wifi)) {
+                        printf("[MQTT] connect failed, retry next window\n");
+                        continue;
+                    }
+                    mqtt_ready = true;
+                }
 
+                printf("[MQTT] publishing payload: %s\r\n", payload);
                 publish_mqtt_message("sound/volume", payload);
 
-                dB_count = 0; // reset after publishing
+                dB_count = 0;  // reset for the next window
             }
         }
     }
@@ -183,7 +230,7 @@ bool connect_to_wifi(WiFiInterface *wifi) {
 }
 
 bool connect_to_mqtt(WiFiInterface *wifi) {
-    wifi->gethostbyname("192.168.2.138", &broker);
+    broker.set_ip_address("192.168.2.138"); // replace the IP with broker's ip
     broker.set_port(1883);
 
     socket.open(wifi);
@@ -218,7 +265,6 @@ void publish_mqtt_message(const char *topic, const char *payload) {
     printf("📤 MQTT Publish to '%s' => %s\n", topic, pub == 0 ? "OK" : "FAIL");
 }
 
-
 int main()
 {
     disable_unused_clocks();
@@ -227,8 +273,8 @@ int main()
     fflush(stdout);
 
     WiFiInterface *wifi = WiFiInterface::get_default_instance();
+    g_wifi = wifi;
     if (!connect_to_wifi(wifi)) return -1;
-    if (!connect_to_mqtt(wifi)) return -1;
 
     // set up the microphone and start recording input
     MicParams.BitsPerSample = 16;

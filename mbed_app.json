@@ -6,7 +6,8 @@
       "nsapi.default-wifi-ssid": "\"BELL740\"",
       "nsapi.default-wifi-password": "\"46E6AC951223\"",
       "platform.stdio-baud-rate": 115200,
-      "target.printf_lib": "std"
+      "target.printf_lib": "std",
+      "target.network-default-interface-type": "WIFI"
     }
   }
 }
