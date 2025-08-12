@@ -31,8 +31,9 @@ static EventQueue ev_queue;
 Thread processing_thread;
 Thread event_thread;
 static osThreadId_t processing_thread_id;
+int blink_event_id = 0;
 
-volatile bool mic_enabled = true;
+volatile bool mic_enabled = false;
 InterruptIn button1(BUTTON1);
 DigitalOut led1(LED1); // led is on when audio is recording
 
@@ -45,21 +46,18 @@ TCPSocket socket;
 MQTT::Client<TCPSocket, Countdown> *client;
 
 extern "C" void disable_unused_clocks() {
-    // — disable secondary PLLs
+    // disable secondary PLLs
     RCC->CR &= ~(RCC_CR_PLLSAI1ON | RCC_CR_PLLSAI2ON);
 
-    // — turn off low-speed oscillators
+    // turn off low-speed oscillators
     RCC->CSR &= ~RCC_CSR_LSION;    // internal low-speed RC
-    RCC->BDCR &= ~RCC_BDCR_LSEON;  // external LSE (32 kHz)
 
-    // — gate buses for unused peripherals
+    // gate buses for unused peripherals
     // AHB1: TSC, CRC
     RCC->AHB1ENR &= ~(RCC_AHB1ENR_TSCEN | RCC_AHB1ENR_CRCEN);
 
     RCC->AHB2ENR &= ~(RCC_AHB2ENR_RNGEN    // RNG
                     | RCC_AHB2ENR_ADCEN    // ADC
-                    /*| RCC_AHB2ENR_SDMMC1EN*/ // <— keep
-                    /*| RCC_AHB2ENR_OTGFSEN*/  // <— keep USB CDC
                     | RCC_AHB2ENR_GPIOCEN 
                     | RCC_AHB2ENR_GPIODEN
                     | RCC_AHB2ENR_GPIOEEN
@@ -67,21 +65,21 @@ extern "C" void disable_unused_clocks() {
                     | RCC_AHB2ENR_GPIOGEN
                     | RCC_AHB2ENR_GPIOHEN);
 
-    // APB1: I²C, SPI2, timers, KEEP TIM2/SysTick
+    // APB1: I2C, SPI2, I think all of the timers need to stay (ask me how i know)
     RCC->APB1ENR1 &= ~(RCC_APB1ENR1_I2C1EN
                      | RCC_APB1ENR1_I2C2EN
-                     | RCC_APB1ENR1_SPI2EN
-                     | RCC_APB1ENR1_TIM6EN
-                     /*| RCC_APB1ENR1_TIM2EN*/);
+                     | RCC_APB1ENR1_SPI2EN);
 
-    // APB1: LPUART1 but KEEP the serial port’s UART
-    RCC->APB1ENR2 &= ~(RCC_APB1ENR2_LPUART1EN);
+    // APB1: LPUART1
+    RCC->APB1ENR2 &= ~RCC_APB1ENR2_LPUART1EN;
 
-    // APB2: SPI1, TIM1, SDMMC1 
-    RCC->APB2ENR &= ~(RCC_APB2ENR_SPI1EN
-                    | RCC_APB2ENR_TIM1EN
-                    /*| RCC_APB2ENR_SDMMC1EN*/  // <— keep for Wi-Fi
-                    );
+    // APB2: SPI1, TIM1 
+    RCC->APB2ENR &= ~(RCC_APB2ENR_SPI1EN | RCC_APB2ENR_TIM1EN);
+}
+
+void toggle_led()
+{
+    led1 = !led1;
 }
 
 
@@ -103,23 +101,6 @@ float process_audio(int16_t *samples) {
     return dbfs;
 }
 
-// TODO: replace this with driving LED once we get them
-// the output is slightly out of sync with audio input 
-// because printf is slow i think
-void print_volume_bar(float dB) {
-    // map -60 dB to 0 bars, 0 dB to 20 bars
-    int bar_count = (int)((dB + 60.0f) / 3.0f);  // 0–20 steps
-
-    printf("[");
-    for (int i = 0; i < bar_count; i++) {
-        printf("-");
-    }
-    for (int i = bar_count; i < 20; i++) {
-        printf(" ");
-    }
-    printf("] %d\n", (int)dB);
-}
-
 // first half of buffer
 void BSP_AUDIO_IN_HalfTransfer_CallBack (uint32_t Instance) {
     if (!mic_enabled) return;
@@ -134,13 +115,26 @@ void BSP_AUDIO_IN_TransferComplete_CallBack(uint32_t Instance) {
     osSignalSet(processing_thread_id, 0x1);
 }
 
+void start_blinking_led() {
+    if (blink_event_id == 0) {
+        blink_event_id = ev_queue.call_every(100ms, toggle_led);
+    }
+}
+
+void stop_blinking_led() {
+    if (blink_event_id != 0) {
+        ev_queue.cancel(blink_event_id);
+        blink_event_id = 0;
+        led1 = mic_enabled;
+    }
+}
+
 void audio_processing_thread() {
     bool mqtt_ready = false;
-    const float WAKE_THRESHOLD = -50.0f;  // only act if dB > this
+    const float WAKE_THRESHOLD = -50.0f;
 
     while (true) {
-        // Sleep until any IRQ (DMA handler)
-        printf("[LP] __WFI: sleeping until audio IRQ…\r\n");
+        // sleep until any IRQ (DMA handler)
         __WFI();
         osSignalWait(0x1, osWaitForever);
 
@@ -153,10 +147,12 @@ void audio_processing_thread() {
                 continue;
             }
 
-            printf("[LP] instant dB = %.1f dB >= %.1f, processing…\r\n",
-               dB, WAKE_THRESHOLD);
-
-        
+            // trigger led blinking when volume is approaching max
+            if (dB >= -30.0f) {
+                start_blinking_led();
+            } else {
+                stop_blinking_led();
+            }
 
             // Above threshold—add into rolling window
             dB_buffer[dB_index++] = dB;
@@ -188,7 +184,6 @@ void audio_processing_thread() {
                     mqtt_ready = true;
                 }
 
-                printf("[MQTT] publishing payload: %s\r\n", payload);
                 publish_mqtt_message("sound/volume", payload);
 
                 dB_count = 0;  // reset for the next window
@@ -199,7 +194,7 @@ void audio_processing_thread() {
 
 void toggle_microphone() {
     mic_enabled = !mic_enabled;
-    led1 = !led1;
+    led1 = mic_enabled;
 
     if (mic_enabled) {
         BSP_AUDIO_IN_Resume(AUDIO_INSTANCE);
@@ -219,13 +214,13 @@ bool connect_to_wifi(WiFiInterface *wifi) {
 
     int ret = wifi->connect("BELL740", "46E6AC951223", NSAPI_SECURITY_WPA_WPA2);
     if (ret != 0) {
-        printf("❌ WiFi connection failed: %d\n", ret);
+        printf("WiFi connection failed: %d\n", ret);
         return false;
     }
 
     SocketAddress a;
     wifi->get_ip_address(&a);
-    printf("✅ Wi-Fi connected! IP: %s\n", a.get_ip_address() ? a.get_ip_address() : "None");
+    printf("Wi-Fi connected! IP: %s\n", a.get_ip_address() ? a.get_ip_address() : "None");
     return true;
 }
 
@@ -235,7 +230,7 @@ bool connect_to_mqtt(WiFiInterface *wifi) {
 
     socket.open(wifi);
     if (socket.connect(broker) != 0) {
-        printf("❌ Failed to connect to MQTT broker\n");
+        printf("Failed to connect to MQTT broker\n");
         return false;
     }
 
@@ -245,11 +240,11 @@ bool connect_to_mqtt(WiFiInterface *wifi) {
     connectData.clientID.cstring = (char *)"disco-board";
 
     if (client->connect(connectData) != 0) {
-        printf("❌ MQTT connection failed\n");
+        printf("MQTT connection failed\n");
         return false;
     }
 
-    printf("📡 MQTT connected to broker!\n");
+    printf("MQTT connected to broker!\n");
     return true;
 }
 
@@ -262,7 +257,7 @@ void publish_mqtt_message(const char *topic, const char *payload) {
     msg.payloadlen = strlen(payload);
 
     int pub = client->publish(topic, msg);
-    printf("📤 MQTT Publish to '%s' => %s\n", topic, pub == 0 ? "OK" : "FAIL");
+    printf("MQTT Publish to '%s' => %s\n", topic, pub == 0 ? "OK" : "FAIL");
 }
 
 int main()
@@ -275,6 +270,9 @@ int main()
     WiFiInterface *wifi = WiFiInterface::get_default_instance();
     g_wifi = wifi;
     if (!connect_to_wifi(wifi)) return -1;
+
+    // event queue runs in separate thread
+    event_thread.start(callback(&ev_queue, &EventQueue::dispatch_forever));
 
     // set up the microphone and start recording input
     MicParams.BitsPerSample = 16;
@@ -295,12 +293,11 @@ int main()
     }
 
     BSP_AUDIO_IN_Record(AUDIO_INSTANCE, (uint8_t*)PCM_Buffer, PCM_BUFFER_LEN);
-    led1 = 1;
+    BSP_AUDIO_IN_Pause(AUDIO_INSTANCE);
+    led1 = 0;
 
     processing_thread.start(audio_processing_thread);
     processing_thread_id = processing_thread.get_id();
 
     button1.fall(&toggle_microphone);
-
-    ev_queue.dispatch_forever();
 }
