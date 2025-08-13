@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<meta charset="utf-8" />
+<title>Sound Monitor</title>
+<style>
+  body {
+    font: 14px system-ui;
+    margin: 2rem;
+    display: grid;
+    gap: 1rem;
+    max-width: 640px;
+  }
+  .card {
+    border: 1px solid #ddd;
+    border-radius: 12px;
+    padding: 1rem;
+  }
+  .row {
+    display: flex;
+    gap: 1rem;
+    align-items: baseline;
+  }
+  .meter {
+    height: 14px;
+    background: #eee;
+    border-radius: 7px;
+    overflow: hidden;
+  }
+  .bar {
+    height: 100%;
+    width: 0%;
+  }
+</style>
+
+<div class="card">
+  <div class="row"><b>Status:</b><span id="status">connecting…</span></div>
+  <div class="row"><b>Topic:</b><code>sound/volume</code></div>
+  <div class="row"><b>Avg dB:</b><span id="avg">—</span></div>
+  <div class="row"><b>Min / Max:</b><span id="minmax">—</span></div>
+  <div class="meter"><div id="bar" class="bar"></div></div>
+</div>
+<div class="card">
+  <b>Log</b>
+  <pre id="log" style="max-height: 220px; overflow: auto; margin: 0"></pre>
+</div>
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script>
+  const host = "ws://192.168.2.138:9001"; // change if your WS port/path differs
+  const topic = "sound/volume";
+  const client = mqtt.connect(host, {
+    clientId: "web-viewer-" + Math.random().toString(16).slice(2),
+  });
+
+  const $ = (id) => document.getElementById(id);
+  const status = $("status"),
+    avg = $("avg"),
+    minmax = $("minmax"),
+    bar = $("bar"),
+    log = $("log");
+
+  client.on("connect", () => {
+    status.textContent = "connected to " + host;
+    client.subscribe(topic);
+  });
+  client.on("reconnect", () => (status.textContent = "reconnecting…"));
+  client.on("error", (e) => {
+    status.textContent = "error: " + e.message;
+    console.error(e);
+  });
+
+  client.on("message", (t, payload) => {
+    try {
+      const m = JSON.parse(payload.toString());
+      avg.textContent = m.avg_decibel.toFixed(1) + " dB";
+      minmax.textContent = `${m.min_decibel.toFixed(
+        1
+      )} / ${m.max_decibel.toFixed(1)} dB`;
+      // map -60..0 dB to 0..100%
+      const pct = Math.max(0, Math.min(100, ((m.avg_decibel + 60) / 60) * 100));
+      bar.style.width = pct + "%";
+      bar.style.background =
+        pct < 33 ? "#3cb371" : pct < 66 ? "#f1c40f" : "#e74c3c";
+      log.textContent =
+        `[${new Date().toLocaleTimeString()}] ${payload.toString()}\n` +
+        log.textContent;
+    } catch (e) {
+      log.textContent =
+        `[${new Date().toLocaleTimeString()}] ${payload}\n` + log.textContent;
+    }
+  });
+</script>
