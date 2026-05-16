@@ -1,91 +1,252 @@
 <!DOCTYPE html>
+<html lang="en">
 <meta charset="utf-8" />
-<title>Sound Monitor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ResonanceRGB Monitor</title>
 <style>
+  :root {
+    color-scheme: dark;
+    --bg: #101214;
+    --panel: #191d20;
+    --panel-2: #20262a;
+    --text: #edf2f4;
+    --muted: #9aa6ac;
+    --line: #30383d;
+    --green: #2ec27e;
+    --yellow: #f5c542;
+    --red: #ff5d5d;
+    --blue: #5aa9ff;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
   body {
-    font: 14px system-ui;
-    margin: 2rem;
-    display: grid;
-    gap: 1rem;
-    max-width: 640px;
+    min-height: 100vh;
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
-  .card {
-    border: 1px solid #ddd;
-    border-radius: 12px;
-    padding: 1rem;
+
+  main {
+    width: min(920px, calc(100% - 32px));
+    margin: 0 auto;
+    padding: 40px 0;
   }
-  .row {
+
+  header {
     display: flex;
-    gap: 1rem;
-    align-items: baseline;
+    justify-content: space-between;
+    gap: 24px;
+    align-items: end;
+    margin-bottom: 24px;
   }
+
+  h1 {
+    margin: 0;
+    font-size: clamp(2rem, 5vw, 4rem);
+    line-height: 0.95;
+    letter-spacing: 0;
+  }
+
+  .subtitle {
+    margin: 12px 0 0;
+    color: var(--muted);
+    max-width: 620px;
+  }
+
+  .status-pill {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 999px;
+    padding: 8px 12px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .status-pill[data-state="connected"] {
+    color: var(--green);
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1.2fr 0.8fr;
+    gap: 16px;
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 20px;
+  }
+
+  .metric {
+    display: grid;
+    gap: 8px;
+  }
+
+  .label {
+    color: var(--muted);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+  }
+
+  .value {
+    font-size: clamp(3rem, 12vw, 7rem);
+    line-height: 0.9;
+    font-weight: 750;
+  }
+
   .meter {
-    height: 14px;
-    background: #eee;
-    border-radius: 7px;
+    height: 18px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 999px;
     overflow: hidden;
   }
+
   .bar {
     height: 100%;
     width: 0%;
+    background: var(--blue);
+    transition: width 180ms ease, background 180ms ease;
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-top: 18px;
+  }
+
+  .stat {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+  }
+
+  .stat strong {
+    display: block;
+    font-size: 1.65rem;
+    line-height: 1.1;
+  }
+
+  code {
+    color: var(--blue);
+  }
+
+  pre {
+    min-height: 286px;
+    max-height: 286px;
+    margin: 12px 0 0;
+    overflow: auto;
+    color: var(--muted);
+    white-space: pre-wrap;
+  }
+
+  @media (max-width: 720px) {
+    header,
+    .grid {
+      grid-template-columns: 1fr;
+      display: grid;
+    }
+
+    header {
+      align-items: start;
+    }
   }
 </style>
 
-<div class="card">
-  <div class="row"><b>Status:</b><span id="status">connecting…</span></div>
-  <div class="row"><b>Topic:</b><code>sound/volume</code></div>
-  <div class="row"><b>Avg dB:</b><span id="avg">—</span></div>
-  <div class="row"><b>Min / Max:</b><span id="minmax">—</span></div>
-  <div class="meter"><div id="bar" class="bar"></div></div>
-</div>
-<div class="card">
-  <b>Log</b>
-  <pre id="log" style="max-height: 220px; overflow: auto; margin: 0"></pre>
-</div>
+<main>
+  <header>
+    <div>
+      <h1>ResonanceRGB</h1>
+      <p class="subtitle">Live MQTT telemetry from the STM32 audio-reactive LED visualizer.</p>
+    </div>
+    <div id="status" class="status-pill" data-state="connecting">Connecting</div>
+  </header>
+
+  <section class="grid">
+    <div class="panel">
+      <div class="metric">
+        <div class="label">Average sound level</div>
+        <div class="value"><span id="avg">--</span><small> dB</small></div>
+        <div class="meter"><div id="bar" class="bar"></div></div>
+      </div>
+      <div class="stats">
+        <div class="stat">
+          <span class="label">Minimum</span>
+          <strong><span id="min">--</span> dB</strong>
+        </div>
+        <div class="stat">
+          <span class="label">Maximum</span>
+          <strong><span id="max">--</span> dB</strong>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="label">Topic</div>
+      <code>sound/volume</code>
+      <pre id="log"></pre>
+    </div>
+  </section>
+</main>
 
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 <script>
-  const host = "ws://192.168.2.138:9001"; // change if your WS port/path differs
+  const host = "ws://192.168.2.138:9001";
   const topic = "sound/volume";
   const client = mqtt.connect(host, {
-    clientId: "web-viewer-" + Math.random().toString(16).slice(2),
+    clientId: "resonancergb-dashboard-" + Math.random().toString(16).slice(2),
   });
 
   const $ = (id) => document.getElementById(id);
-  const status = $("status"),
-    avg = $("avg"),
-    minmax = $("minmax"),
-    bar = $("bar"),
-    log = $("log");
+  const status = $("status");
+  const avg = $("avg");
+  const min = $("min");
+  const max = $("max");
+  const bar = $("bar");
+  const log = $("log");
+
+  function setStatus(text, state) {
+    status.textContent = text;
+    status.dataset.state = state;
+  }
 
   client.on("connect", () => {
-    status.textContent = "connected to " + host;
+    setStatus("Connected", "connected");
     client.subscribe(topic);
   });
-  client.on("reconnect", () => (status.textContent = "reconnecting…"));
-  client.on("error", (e) => {
-    status.textContent = "error: " + e.message;
-    console.error(e);
+
+  client.on("reconnect", () => setStatus("Reconnecting", "connecting"));
+  client.on("error", (error) => {
+    setStatus("Connection error", "error");
+    console.error(error);
   });
 
-  client.on("message", (t, payload) => {
+  client.on("message", (receivedTopic, payload) => {
     try {
-      const m = JSON.parse(payload.toString());
-      avg.textContent = m.avg_decibel.toFixed(1) + " dB";
-      minmax.textContent = `${m.min_decibel.toFixed(
-        1
-      )} / ${m.max_decibel.toFixed(1)} dB`;
-      // map -60..0 dB to 0..100%
-      const pct = Math.max(0, Math.min(100, ((m.avg_decibel + 60) / 60) * 100));
+      const message = JSON.parse(payload.toString());
+      avg.textContent = message.avg_decibel.toFixed(1);
+      min.textContent = message.min_decibel.toFixed(1);
+      max.textContent = message.max_decibel.toFixed(1);
+
+      const pct = Math.max(0, Math.min(100, ((message.avg_decibel + 60) / 60) * 100));
       bar.style.width = pct + "%";
-      bar.style.background =
-        pct < 33 ? "#3cb371" : pct < 66 ? "#f1c40f" : "#e74c3c";
+      bar.style.background = pct < 33 ? "var(--green)" : pct < 66 ? "var(--yellow)" : "var(--red)";
+
       log.textContent =
-        `[${new Date().toLocaleTimeString()}] ${payload.toString()}\n` +
+        `[${new Date().toLocaleTimeString()}] ${receivedTopic} ${payload.toString()}\n` +
         log.textContent;
-    } catch (e) {
+    } catch (error) {
       log.textContent =
-        `[${new Date().toLocaleTimeString()}] ${payload}\n` + log.textContent;
+        `[${new Date().toLocaleTimeString()}] ${payload.toString()}\n` + log.textContent;
     }
   });
 </script>
+</html>

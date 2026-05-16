@@ -3,8 +3,8 @@
     "*": {
       "target.components_add": ["ISM43362"],
       "nsapi.default-wifi-security": "WPA_WPA2",
-      "nsapi.default-wifi-ssid": "\"BELL740\"",
-      "nsapi.default-wifi-password": "\"46E6AC951223\"",
+      "nsapi.default-wifi-ssid": "\"YOUR_WIFI_SSID\"",
+      "nsapi.default-wifi-password": "\"YOUR_WIFI_PASSWORD\"",
       "platform.stdio-baud-rate": 115200,
       "target.printf_lib": "std",
       "target.network-default-interface-type": "WIFI"

@@ -5,6 +5,10 @@
 #include "MQTTClient.h"
 #include "MQTTmbed.h"
 
+#ifndef MQTT_BROKER_IP
+#define MQTT_BROKER_IP "192.168.2.138"
+#endif
+
 
 // MQTT 
 #define AVG_WINDOW_SECONDS 30
@@ -351,7 +355,7 @@ bool connect_to_wifi(WiFiInterface *wifi) {
         return false;
     }
 
-    int ret = wifi->connect("BELL740", "46E6AC951223", NSAPI_SECURITY_WPA_WPA2);
+    int ret = wifi->connect();
     if (ret != 0) {
         printf("WiFi connection failed: %d\n", ret);
         return false;
@@ -364,7 +368,7 @@ bool connect_to_wifi(WiFiInterface *wifi) {
 }
 
 bool connect_to_mqtt(WiFiInterface *wifi) {
-    broker.set_ip_address("192.168.2.138"); // replace the IP with broker's ip
+    broker.set_ip_address(MQTT_BROKER_IP);
     broker.set_port(1883);
 
     socket.open(wifi);

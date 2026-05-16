@@ -1,93 +1,37 @@
 # ResonanceRGB
 
-ResonanceRGB is an LED visualizer that listens and reacts to the sound around it.
-The onboard microphone on the discovery board will be used to sample ambient
-audio, compute real time amplitude envelopes, and drive an addressable LED strip
-with dynamic colour and pattern effects. Additionally, the system will also log the
-average dB levels to the cloud and offer a threshold flash effect for high volume
-sounds.
+ResonanceRGB is an embedded audio-reactive LED visualizer built on Mbed OS for the
+STM32L475 Discovery IoT board. It samples ambient audio from the onboard digital
+microphone, filters and analyzes the signal in real time, drives a 9-LED
+visualizer, and publishes rolling sound-level telemetry over MQTT for a browser
+dashboard.
 
-# Notes
+## What it demonstrates
 
-This project runs on a shared Mbed OS instance
+- Real-time embedded audio processing with DMA microphone callbacks.
+- Digital filtering, RMS/dBFS calculation, envelope tracking, and simple onset
+  detection for bass, mid, and high-frequency events.
+- Concurrent firmware design using Mbed threads, event queues, interrupts, and
+  low-power waits.
+- Wi-Fi and MQTT integration from a constrained device to a local broker.
+- A lightweight web dashboard that subscribes to live telemetry over MQTT
+  WebSockets.
 
+## System Overview
 
-## Dependencies
-
-- Mbed OS (Tested on 6.x)  
-- [`MQTTClient`](http://os.mbed.com/teams/mqtt/code/MQTT/) 
-- Audio drivers for `stm32l475e_iot01_audio.h`  
-- [`FILTER_LIB.h`](http://os.mbed.com/teams/Project_WIPV_antiSlip/code/FILTER_LIB/) for high-pass filtering  
-- [wifi-ism43362](https://github.com/ARMmbed/wifi-ism43362.git) 
-- [IIR](http://os.mbed.com/teams/LDSC_Robotics_TAs/code/IIR/)
-
----
-
-## Setup Guide
-
-### 1. Update Wi-Fi Credentials
-
-Open `main.cpp` and **replace** the SSID and password in the following line:
-
-```cpp
-wifi->connect("YOUR_SSID", "YOUR_PASSWORD", NSAPI_SECURITY_WPA_WPA2);
+```text
+STM32L475 digital mic
+        |
+        v
+DMA audio buffer -> high-pass filter -> dBFS + beat detection
+        |                                  |
+        |                                  v
+        |                           9-LED visualizer
+        v
+30-second rolling stats -> MQTT broker -> browser dashboard
 ```
 
-Also, make sure your mbed_app.json contains:
-
-```js
-{
-  "target_overrides": {
-    "*": {
-      "target.components_add": ["ISM43362"],
-      "nsapi.default-wifi-security": "WPA_WPA2",
-      "nsapi.default-wifi-ssid": "\"YOUR_SSID\"",
-      "nsapi.default-wifi-password": "\"YOUR_PASSWORD\"",
-      "platform.stdio-baud-rate": 115200,
-      "target.printf_lib": "std"
-    }
-  }
-}
-```
-
----
-
-### 2. Start Local MQTT Broker
-
-Install and start Mosquitto:
-
-```bash
-brew install mosquitto
-```
-
-Allow anonymous access in the config file `~/.mosquitto/mosquitto.conf` using the following configuration:
-
-```conf
-listener 1883
-allow_anonymous true
-```
-
-Run the broker:
-
-```bash
- mosquitto -c ~/.mosquitto/mosquitto.conf
- ```
-
----
-
-### 3. Set Broker IP
-
-In `main.cpp`, replace the IP with your computer’s local IP address:
-
-```cpp
-    broker.set_ip_address("192.168.2.138"); // replace the IP with broker's ip
-```
-
-If the board complains about MQTT connection, ensure your broker is accessible in your network (i.e disable firewall, try to connect to broker through another device
-
-## MQTT Payload Format
-
-Publishes every \~30s to the topic `sound/volume`:
+The firmware publishes sound statistics to `sound/volume` as JSON:
 
 ```json
 {
@@ -97,8 +41,94 @@ Publishes every \~30s to the topic `sound/volume`:
 }
 ```
 
-### 4. Update MQTTClient.h with the provided implementation (IMPORTANT)
+## Hardware
 
-Since MQTTClient library was written for MbedOS 5.x, the "write" and "read" methods were 
-replaced with `send` and `recv`, please replace `MQTTClient.h` in the `MQTT` library with 
-the provided implementation under `./Patch/`
+- STM32L475 Discovery IoT board with the onboard MP34DT01 digital microphone.
+- 9 LEDs connected to pins `D0` through `D8`.
+- Wi-Fi network reachable by both the board and the machine running Mosquitto.
+
+## Repository Layout
+
+| Path | Purpose |
+| --- | --- |
+| `main.cpp` | Firmware entry point, audio processing, LED reactions, Wi-Fi, and MQTT. |
+| `MP34DT01/` | Board audio driver files for the digital microphone. |
+| `FILTER_LIB/`, `IIR/` | Filtering utilities used by the audio pipeline. |
+| `Patch/MQTTClient.h` | Mbed OS 6 compatible MQTT client patch. |
+| `web/index.html` | Browser dashboard for MQTT WebSocket telemetry. |
+| `mosquitto.conf` | Local MQTT and WebSocket listener configuration. |
+| `mbed_app.json` | Mbed target and Wi-Fi configuration placeholders. |
+
+## Setup
+
+### 1. Configure Wi-Fi
+
+Update `mbed_app.json` with local credentials before building:
+
+```json
+{
+  "target_overrides": {
+    "*": {
+      "nsapi.default-wifi-ssid": "\"YOUR_WIFI_SSID\"",
+      "nsapi.default-wifi-password": "\"YOUR_WIFI_PASSWORD\""
+    }
+  }
+}
+```
+
+`main.cpp` calls `wifi->connect()`, so the firmware reads these values from the
+Mbed configuration instead of hard-coding private credentials in source.
+
+### 2. Start the MQTT broker
+
+Install Mosquitto:
+
+```bash
+brew install mosquitto
+```
+
+Run it with the included config:
+
+```bash
+mosquitto -c mosquitto.conf
+```
+
+The config opens:
+
+- `1883` for firmware MQTT traffic.
+- `9001` for browser MQTT over WebSockets.
+
+### 3. Configure the broker IP
+
+Set the broker IP to the local IP address of the machine running Mosquitto. The
+firmware defaults to `192.168.2.138`, but it can be overridden at build time:
+
+```bash
+mbed compile -t GCC_ARM -m DISCO_L475VG_IOT01A --profile mbed-os/tools/profiles/release.json -D MQTT_BROKER_IP=\"192.168.2.138\"
+```
+
+If MQTT cannot connect, confirm that the board and broker are on the same
+network and that the machine firewall allows ports `1883` and `9001`.
+
+### 4. Patch the MQTT client
+
+The original Mbed MQTT library targets older Mbed OS socket APIs. Replace the
+library's `MQTTClient.h` with the version in `Patch/MQTTClient.h`, which uses
+`send` and `recv` for Mbed OS 6 compatibility.
+
+### 5. Open the dashboard
+
+Serve or open `web/index.html`, then update the `host` constant if your broker
+WebSocket URL is different:
+
+```js
+const host = "ws://192.168.2.138:9001";
+```
+
+## Build Notes
+
+This project was developed against Mbed OS 6.x and uses pinned `.lib` references
+for Mbed OS, the ISM43362 Wi-Fi driver, MQTT, and filtering libraries.
+
+Ignored local build outputs include `.build`, `.mbed`, `BUILD`, generated project
+files, and vendored Mbed dependency directories.
