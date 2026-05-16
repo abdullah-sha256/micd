@@ -1,6 +1,6 @@
-# ResonanceRGB
+# Mic Go Brrr
 
-ResonanceRGB is an embedded audio-reactive LED visualizer built on Mbed OS for the
+Mic Go Brrr is an embedded audio-reactive LED visualizer built on Mbed OS for the
 STM32L475 Discovery IoT board. It samples ambient audio from the onboard digital
 microphone, filters and analyzes the signal in real time, drives a 9-LED
 visualizer, and publishes rolling sound-level telemetry over MQTT for a browser
@@ -17,18 +17,27 @@ dashboard.
 - A lightweight web dashboard that subscribes to live telemetry over MQTT
   WebSockets.
 
+## Why we built it
+
+This was our final project for CSC385 (Microprocessor Systems) where we had to demonstrate our knowledge in course topics such as Internet of Things (IoT), embedded computing, scheduling for real-time systems, optimizing power consumption and programming with sensors on lightweight, low power processors
+
+
 ## System Overview
 
-```text
-STM32L475 digital mic
-        |
-        v
-DMA audio buffer -> high-pass filter -> dBFS + beat detection
-        |                                  |
-        |                                  v
-        |                           9-LED visualizer
-        v
-30-second rolling stats -> MQTT broker -> browser dashboard
+```mermaid
+flowchart TD
+    subgraph Device["STM32L475 IoT Board"]
+        A[Digital Microphone] --> B[DMA Audio Buffer]
+        B --> C[High-Pass Filter]
+        C --> D[dBFS + Beat Detection]
+        D --> E[9-LED Visualizer]
+        B --> F[30-Second Rolling Stats]
+    end
+
+    subgraph Network["MQTT Pipeline"]
+        F --> G[MQTT Broker]
+        G --> H[Browser Dashboard]
+    end
 ```
 
 The firmware publishes sound statistics to `sound/volume` as JSON:
@@ -46,18 +55,6 @@ The firmware publishes sound statistics to `sound/volume` as JSON:
 - STM32L475 Discovery IoT board with the onboard MP34DT01 digital microphone.
 - 9 LEDs connected to pins `D0` through `D8`.
 - Wi-Fi network reachable by both the board and the machine running Mosquitto.
-
-## Repository Layout
-
-| Path | Purpose |
-| --- | --- |
-| `main.cpp` | Firmware entry point, audio processing, LED reactions, Wi-Fi, and MQTT. |
-| `MP34DT01/` | Board audio driver files for the digital microphone. |
-| `FILTER_LIB/`, `IIR/` | Filtering utilities used by the audio pipeline. |
-| `Patch/MQTTClient.h` | Mbed OS 6 compatible MQTT client patch. |
-| `web/index.html` | Browser dashboard for MQTT WebSocket telemetry. |
-| `mosquitto.conf` | Local MQTT and WebSocket listener configuration. |
-| `mbed_app.json` | Mbed target and Wi-Fi configuration placeholders. |
 
 ## Setup
 
@@ -112,23 +109,13 @@ network and that the machine firewall allows ports `1883` and `9001`.
 
 ### 4. Patch the MQTT client
 
-The original Mbed MQTT library targets older Mbed OS socket APIs. Replace the
-library's `MQTTClient.h` with the version in `Patch/MQTTClient.h`, which uses
-`send` and `recv` for Mbed OS 6 compatibility.
+This is an important step, we had to patch the original Mbed MQTT library because it targets an older Mbed OS Socket API. Replace the library's `MQTTClient.h` with the version in `Patch/MQTTClient.h`, which uses `send` and `recv` for Mbed OS 6 compatibility.
 
 ### 5. Open the dashboard
 
-Serve or open `web/index.html`, then update the `host` constant if your broker
+Open `web/index.html`, then update the `host` constant if your broker
 WebSocket URL is different:
 
 ```js
 const host = "ws://192.168.2.138:9001";
 ```
-
-## Build Notes
-
-This project was developed against Mbed OS 6.x and uses pinned `.lib` references
-for Mbed OS, the ISM43362 Wi-Fi driver, MQTT, and filtering libraries.
-
-Ignored local build outputs include `.build`, `.mbed`, `BUILD`, generated project
-files, and vendored Mbed dependency directories.

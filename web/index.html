@@ -2,7 +2,7 @@
 <html lang="en">
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ResonanceRGB Monitor</title>
+<title>Mic Go Brrr Monitor</title>
 <style>
   :root {
     color-scheme: dark;
@@ -164,7 +164,7 @@
 <main>
   <header>
     <div>
-      <h1>ResonanceRGB</h1>
+      <h1>Mic Go Brrr</h1>
       <p class="subtitle">Live MQTT telemetry from the STM32 audio-reactive LED visualizer.</p>
     </div>
     <div id="status" class="status-pill" data-state="connecting">Connecting</div>
@@ -202,7 +202,7 @@
   const host = "ws://192.168.2.138:9001";
   const topic = "sound/volume";
   const client = mqtt.connect(host, {
-    clientId: "resonancergb-dashboard-" + Math.random().toString(16).slice(2),
+    clientId: "MicGoBrrr-dashboard-" + Math.random().toString(16).slice(2),
   });
 
   const $ = (id) => document.getElementById(id);
