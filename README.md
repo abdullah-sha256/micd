@@ -1,12 +1,14 @@
-# Mic Go Brrr
+# micd
 
-Mic Go Brrr is an embedded audio-reactive LED visualizer built on Mbed OS for the
+> `micd(8)` — the microphone daemon. Listens to the room, blinks LEDs, speaks MQTT.
+
+**micd** is an embedded audio-reactive LED visualizer built on Mbed OS for the
 STM32L475 Discovery IoT board. It samples ambient audio from the onboard digital
 microphone, filters and analyzes the signal in real time, drives a 9-LED
 visualizer, and publishes rolling sound-level telemetry over MQTT for a browser
 dashboard.
 
-## What it demonstrates
+## FEATURES
 
 - Real-time embedded audio processing with DMA microphone callbacks.
 - Digital filtering, RMS/dBFS calculation, envelope tracking, and simple onset
@@ -17,12 +19,12 @@ dashboard.
 - A lightweight web dashboard that subscribes to live telemetry over MQTT
   WebSockets.
 
-## Why we built it
+## HISTORY
 
 This was our final project for CSC385 (Microprocessor Systems) where we had to demonstrate our knowledge in course topics such as Internet of Things (IoT), embedded computing, scheduling for real-time systems, optimizing power consumption and programming with sensors on lightweight, low power processors
 
 
-## System Overview
+## ARCHITECTURE
 
 ```mermaid
 flowchart TD
@@ -50,13 +52,13 @@ The firmware publishes sound statistics to `sound/volume` as JSON:
 }
 ```
 
-## Hardware
+## HARDWARE
 
 - STM32L475 Discovery IoT board with the onboard MP34DT01 digital microphone.
 - 9 LEDs connected to pins `D0` through `D8`.
 - Wi-Fi network reachable by both the board and the machine running Mosquitto.
 
-## Setup
+## INSTALL
 
 ### 1. Configure Wi-Fi
 
